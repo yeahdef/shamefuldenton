@@ -225,12 +225,6 @@
       });
     }
 
-    // Validate that a coordinate pair is plausibly in the Denton, TX region
-    function isValidCoord(lat, lng) {
-      return !isNaN(lat) && !isNaN(lng) &&
-             lat > 31 && lat < 35 && lng > -99 && lng < -95;
-    }
-
     async function geocodeAddress(address) {
       if (address in geocodeCache) return geocodeCache[address];
       try {
@@ -281,14 +275,7 @@
         cardsEl.appendChild(card);
 
         var popup = '<strong>' + escapeHtml(record.Name) + '</strong><br>Score: ' + score;
-        var lat = parseFloat(record.Lat);
-        var lng = parseFloat(record.Long);
-
-        if (isValidCoord(lat, lng)) {
-          markers.addLayer(L.marker([lat, lng], { icon: createMarkerIcon(color) }).bindPopup(popup));
-        } else {
-          toGeocode.push({ addr: record.Address, popup: popup, color: color });
-        }
+        toGeocode.push({ addr: record.Address, popup: popup, color: color });
       }
 
       // Geocode sequentially to respect Nominatim's 1 req/sec rate limit.
@@ -319,11 +306,11 @@
       var cardsEl = document.getElementById('cards');
       var errorEl = document.getElementById('error');
 
-      var sql = `SELECT "Name", "Address", "HealthScoreInt", "HealthScoreDate", "Lat", "Long"
+      var sql = `SELECT "Name", "Address", "HealthScoreInt", "HealthScoreDate"
 FROM (
   SELECT DISTINCT ON ("Name", "Address")
     "Name", "Address", "HealthScoreInt"::int AS "HealthScoreInt",
-    "HealthScoreDate", "Lat", "Long"
+    "HealthScoreDate"
   FROM "b596e52a-0f84-4766-b376-be9e3ee0b6df"
   WHERE "HealthScoreDate" >= to_char(CURRENT_DATE - INTERVAL '18 months', 'YYYYMMDD')
   ORDER BY "Name", "Address", "HealthScoreDate" DESC
