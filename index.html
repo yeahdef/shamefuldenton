@@ -180,6 +180,7 @@ LIMIT 5`;
           maxZoom: 19
         }).addTo(map);
 
+        var markers = L.featureGroup().addTo(map);
         var cards = document.querySelectorAll('.card');
         for (var i = 0; i < cards.length; i++) {
           var card = cards[i];
@@ -190,11 +191,14 @@ LIMIT 5`;
           var popup = '<strong>' + escapeHtml(name) + '</strong><br>Score: ' + score;
 
           if (!isNaN(lat) && !isNaN(lng)) {
-            L.marker([lat, lng]).bindPopup(popup).addTo(map);
+            markers.addLayer(L.marker([lat, lng]).bindPopup(popup));
           } else {
             var addr = card.querySelector('.address').textContent;
-            await geocodeAndPin(map, addr + ', Denton, TX', popup);
+            await geocodeAndPin(markers, addr + ', Denton, TX', popup);
           }
+        }
+        if (markers.getLayers().length > 0) {
+          map.fitBounds(markers.getBounds().pad(0.15));
         }
 
         document.getElementById('timestamp').textContent = 'Data fetched ' + new Date().toLocaleString();
@@ -205,15 +209,14 @@ LIMIT 5`;
       }
     });
 
-    async function geocodeAndPin(map, address, popup) {
+    async function geocodeAndPin(group, address, popup) {
       try {
         var geoUrl = 'https://nominatim.openstreetmap.org/search?format=json&limit=1&q=' + encodeURIComponent(address);
         var geoRes = await fetch(geoUrl, { headers: { 'User-Agent': 'ShameDenton/1.0' } });
         var geoData = await geoRes.json();
         if (geoData.length > 0) {
-          L.marker([parseFloat(geoData[0].lat), parseFloat(geoData[0].lon)])
-            .bindPopup(popup)
-            .addTo(map);
+          group.addLayer(L.marker([parseFloat(geoData[0].lat), parseFloat(geoData[0].lon)])
+            .bindPopup(popup));
         }
       } catch (e) { /* silently skip — card still shows, just no pin */ }
     }
