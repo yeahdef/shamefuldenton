@@ -78,23 +78,39 @@
       font-size: 0.85rem;
     }
 
-    #load-more-wrap {
-      text-align: center;
+    #pagination {
+      display: none;
+      align-items: center;
+      justify-content: center;
+      gap: 1rem;
       margin-top: 1.25rem;
     }
 
-    #load-more {
+    #pagination button {
       background: #fff;
       border: 1px solid #ddd;
       border-radius: 6px;
-      padding: 0.6rem 1.5rem;
-      font-size: 0.9rem;
+      padding: 0.5rem 1rem;
+      font-size: 1rem;
       cursor: pointer;
       color: #444;
+      line-height: 1;
     }
 
-    #load-more:hover {
+    #pagination button:hover:not(:disabled) {
       background: #f0f0f0;
+    }
+
+    #pagination button:disabled {
+      opacity: 0.35;
+      cursor: default;
+    }
+
+    #page-indicator {
+      font-size: 0.9rem;
+      color: #666;
+      min-width: 4rem;
+      text-align: center;
     }
 
     #error {
@@ -158,8 +174,10 @@
     <h1>🤮 SHAMEDENTON.FOOD</h1>
     <p class="subtitle">Worst restaurant health inspection scores in the last 18 months</p>
     <div id="cards"></div>
-    <div id="load-more-wrap" style="display:none;">
-      <button id="load-more">Load more</button>
+    <div id="pagination">
+      <button id="prev-page">&#8592;</button>
+      <span id="page-indicator"></span>
+      <button id="next-page">&#8594;</button>
     </div>
     <div id="map"></div>
     <div class="info">
@@ -187,6 +205,7 @@
     var PAGE_SIZE = 5;
     var map;
     var markers;
+    var geocodeCache = {}; // keyed by address string -> {lat, lng} or null
 
     function scoreColor(score) {
       if (score < 60) return '#c0392b';
@@ -206,21 +225,39 @@
       });
     }
 
-    async function showPage() {
+    async function geocodeAddress(address) {
+      if (address in geocodeCache) return geocodeCache[address];
+      try {
+        var geoUrl = 'https://nominatim.openstreetmap.org/search?format=json&limit=1&q=' + encodeURIComponent(address + ', Denton, TX');
+        var geoRes = await fetch(geoUrl, { headers: { 'User-Agent': 'ShameDenton/1.0' } });
+        var geoData = await geoRes.json();
+        if (geoData.length > 0) {
+          var result = { lat: parseFloat(geoData[0].lat), lng: parseFloat(geoData[0].lon) };
+          geocodeCache[address] = result;
+          return result;
+        }
+      } catch (e) { /* silently skip */ }
+      geocodeCache[address] = null;
+      return null;
+    }
+
+    async function renderPage() {
       var cardsEl = document.getElementById('cards');
+      cardsEl.innerHTML = '';
+      markers.clearLayers();
+
+      var totalPages = Math.ceil(allRecords.length / PAGE_SIZE);
       var start = page * PAGE_SIZE;
       var batch = allRecords.slice(start, start + PAGE_SIZE);
       var pinPromises = [];
 
       for (var i = 0; i < batch.length; i++) {
         var record = batch[i];
-        var score = record.HealthScoreInt;
+        var score = parseInt(record.HealthScoreInt, 10);
         var color = scoreColor(score);
 
         var card = document.createElement('div');
         card.className = 'card';
-        card.setAttribute('data-lat', record.Lat ?? '');
-        card.setAttribute('data-long', record.Long ?? '');
         card.style.borderLeftColor = color;
 
         var raw = String(record.HealthScoreDate).slice(0, 8);
@@ -236,7 +273,6 @@
 
         cardsEl.appendChild(card);
 
-        // Queue pin placement (async for geocode fallback)
         var popup = '<strong>' + escapeHtml(record.Name) + '</strong><br>Score: ' + score;
         var lat = parseFloat(record.Lat);
         var lng = parseFloat(record.Long);
@@ -244,32 +280,32 @@
         if (!isNaN(lat) && !isNaN(lng)) {
           markers.addLayer(L.marker([lat, lng], { icon: createMarkerIcon(color) }).bindPopup(popup));
         } else {
-          var addr = record.Address;
-          pinPromises.push(geocodeAndPin(markers, addr + ', Denton, TX', popup, color));
+          // Capture loop vars for async closure
+          (function(addr, p, c) {
+            pinPromises.push(
+              geocodeAddress(addr).then(function(coords) {
+                if (coords) {
+                  markers.addLayer(L.marker([coords.lat, coords.lng], { icon: createMarkerIcon(c) }).bindPopup(p));
+                }
+              })
+            );
+          })(record.Address, popup, color);
         }
       }
 
-      page++;
-
-      // Await any geocoding before fitting bounds
       if (pinPromises.length > 0) {
         await Promise.allSettled(pinPromises);
       }
 
       if (markers.getLayers().length > 0) {
         map.fitBounds(markers.getBounds().pad(0.15));
+      } else {
+        map.setView([33.2148, -97.1331], 13);
       }
 
-      // Show/hide load-more button
-      var wrap = document.getElementById('load-more-wrap');
-      if (page * PAGE_SIZE >= allRecords.length) {
-        wrap.style.display = 'none';
-      } else {
-        var remaining = allRecords.length - page * PAGE_SIZE;
-        document.getElementById('load-more').textContent =
-          'Load ' + Math.min(remaining, PAGE_SIZE) + ' more (' + remaining + ' remaining)';
-        wrap.style.display = 'block';
-      }
+      document.getElementById('page-indicator').textContent = (page + 1) + ' / ' + totalPages;
+      document.getElementById('prev-page').disabled = page === 0;
+      document.getElementById('next-page').disabled = page >= totalPages - 1;
     }
 
     document.addEventListener('DOMContentLoaded', async function () {
@@ -302,34 +338,29 @@ LIMIT 50`;
         }).addTo(map);
         markers = L.featureGroup().addTo(map);
 
-        document.getElementById('load-more').addEventListener('click', function () {
-          showPage();
+        document.getElementById('prev-page').addEventListener('click', function () {
+          if (page > 0) { page--; renderPage(); }
         });
 
-        await showPage();
+        document.getElementById('next-page').addEventListener('click', function () {
+          var totalPages = Math.ceil(allRecords.length / PAGE_SIZE);
+          if (page < totalPages - 1) { page++; renderPage(); }
+        });
+
+        if (allRecords.length > PAGE_SIZE) {
+          document.getElementById('pagination').style.display = 'flex';
+        }
+
+        await renderPage();
 
         document.getElementById('timestamp').textContent = 'Data fetched ' + new Date().toLocaleString();
       } catch (e) {
         cardsEl.style.display = 'none';
         document.getElementById('map').style.display = 'none';
-        document.getElementById('load-more-wrap').style.display = 'none';
+        document.getElementById('pagination').style.display = 'none';
         errorEl.style.display = 'block';
       }
     });
-
-    async function geocodeAndPin(group, address, popup, color) {
-      try {
-        var geoUrl = 'https://nominatim.openstreetmap.org/search?format=json&limit=1&q=' + encodeURIComponent(address);
-        var geoRes = await fetch(geoUrl, { headers: { 'User-Agent': 'ShameDenton/1.0' } });
-        var geoData = await geoRes.json();
-        if (geoData.length > 0) {
-          group.addLayer(
-            L.marker([parseFloat(geoData[0].lat), parseFloat(geoData[0].lon)], { icon: createMarkerIcon(color) })
-              .bindPopup(popup)
-          );
-        }
-      } catch (e) { /* silently skip — card still shows, just no pin */ }
-    }
 
     function escapeHtml(str) {
       var d = document.createElement('div');
