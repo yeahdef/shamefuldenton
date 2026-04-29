@@ -225,20 +225,28 @@
       });
     }
 
+    function isValidCoord(lat, lng) {
+      var la = parseFloat(lat), lo = parseFloat(lng);
+      return !isNaN(la) && !isNaN(lo) && la !== 0 && lo !== 0 &&
+             la >= 31 && la <= 35 && lo >= -99 && lo <= -95;
+    }
+
     async function geocodeAddress(address) {
-      if (address in geocodeCache) return geocodeCache[address];
+      var key = address;
+      if (key in geocodeCache) return geocodeCache[key];
       try {
         var geoUrl = 'https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=us&q=' +
           encodeURIComponent(address + ', Denton, TX');
-        var geoRes = await fetch(geoUrl);
+        var geoRes = await fetch(geoUrl, { headers: { 'Accept': 'application/json' } });
+        if (!geoRes.ok) { geocodeCache[key] = null; return null; }
         var geoData = await geoRes.json();
-        if (geoData.length > 0) {
+        if (geoData && geoData.length > 0) {
           var result = { lat: parseFloat(geoData[0].lat), lng: parseFloat(geoData[0].lon) };
-          geocodeCache[address] = result;
+          geocodeCache[key] = result;
           return result;
         }
-      } catch (e) { /* silently skip */ }
-      geocodeCache[address] = null;
+      } catch (e) { /* network error */ }
+      geocodeCache[key] = null;
       return null;
     }
 
@@ -250,7 +258,7 @@
       var totalPages = Math.ceil(allRecords.length / PAGE_SIZE);
       var start = page * PAGE_SIZE;
       var batch = allRecords.slice(start, start + PAGE_SIZE);
-      var toGeocode = []; // {addr, popup, color} for records needing geocoding
+      var toGeocode = []; // {addr, popup, color} for records without valid lat/lng
 
       for (var i = 0; i < batch.length; i++) {
         var record = batch[i];
@@ -275,7 +283,13 @@
         cardsEl.appendChild(card);
 
         var popup = '<strong>' + escapeHtml(record.Name) + '</strong><br>Score: ' + score;
-        toGeocode.push({ addr: record.Address, popup: popup, color: color });
+        if (isValidCoord(record.Lat, record.Long)) {
+          // Use API coordinates directly — fast, no network request needed
+          markers.addLayer(L.marker([parseFloat(record.Lat), parseFloat(record.Long)], { icon: createMarkerIcon(color) }).bindPopup(popup));
+        } else {
+          // No valid lat/lng — queue for address geocoding
+          toGeocode.push({ addr: record.Address, popup: popup, color: color });
+        }
       }
 
       // Geocode sequentially to respect Nominatim's 1 req/sec rate limit.
@@ -306,11 +320,11 @@
       var cardsEl = document.getElementById('cards');
       var errorEl = document.getElementById('error');
 
-      var sql = `SELECT "Name", "Address", "HealthScoreInt", "HealthScoreDate"
+      var sql = `SELECT "Name", "Address", "HealthScoreInt", "HealthScoreDate", "Lat", "Long"
 FROM (
   SELECT DISTINCT ON ("Name", "Address")
     "Name", "Address", "HealthScoreInt"::int AS "HealthScoreInt",
-    "HealthScoreDate"
+    "HealthScoreDate", "Lat", "Long"
   FROM "b596e52a-0f84-4766-b376-be9e3ee0b6df"
   WHERE "HealthScoreDate" >= to_char(CURRENT_DATE - INTERVAL '18 months', 'YYYYMMDD')
   ORDER BY "Name", "Address", "HealthScoreDate" DESC
