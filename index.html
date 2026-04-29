@@ -145,7 +145,7 @@ FROM (
   ORDER BY "Name", "Address", "HealthScoreDate" DESC
 ) latest
 ORDER BY "HealthScoreInt" ASC
-LIMIT 3`;
+LIMIT 5`;
 
       try {
         const url = 'https://data.cityofdenton.com/api/3/action/datastore_search_sql?sql=' + encodeURIComponent(sql);
@@ -180,15 +180,22 @@ LIMIT 3`;
           maxZoom: 19
         }).addTo(map);
 
-        document.querySelectorAll('.card').forEach(function(card) {
+        var cards = document.querySelectorAll('.card');
+        for (var i = 0; i < cards.length; i++) {
+          var card = cards[i];
           var lat = parseFloat(card.dataset.lat);
           var lng = parseFloat(card.dataset.long);
+          var name = card.querySelector('.name').textContent;
+          var score = card.querySelector('.score').textContent;
+          var popup = '<strong>' + escapeHtml(name) + '</strong><br>Score: ' + score;
+
           if (!isNaN(lat) && !isNaN(lng)) {
-            L.marker([lat, lng])
-              .bindPopup('<strong>' + card.querySelector('.name').textContent + '</strong><br>Score: ' + card.querySelector('.score').textContent)
-              .addTo(map);
+            L.marker([lat, lng]).bindPopup(popup).addTo(map);
+          } else {
+            var addr = card.querySelector('.address').textContent;
+            await geocodeAndPin(map, addr + ', Denton, TX', popup);
           }
-        });
+        }
 
         document.getElementById('timestamp').textContent = 'Data fetched ' + new Date().toLocaleString();
       } catch (e) {
@@ -197,6 +204,19 @@ LIMIT 3`;
         errorEl.style.display = 'block';
       }
     });
+
+    async function geocodeAndPin(map, address, popup) {
+      try {
+        var geoUrl = 'https://nominatim.openstreetmap.org/search?format=json&limit=1&q=' + encodeURIComponent(address);
+        var geoRes = await fetch(geoUrl, { headers: { 'User-Agent': 'ShameDenton/1.0' } });
+        var geoData = await geoRes.json();
+        if (geoData.length > 0) {
+          L.marker([parseFloat(geoData[0].lat), parseFloat(geoData[0].lon)])
+            .bindPopup(popup)
+            .addTo(map);
+        }
+      } catch (e) { /* silently skip — card still shows, just no pin */ }
+    }
 
     function escapeHtml(str) {
       const d = document.createElement('div');
