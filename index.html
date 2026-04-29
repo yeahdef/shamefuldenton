@@ -95,11 +95,18 @@
 
     #map { height: 350px; border-radius: 8px; margin-top: 1.5rem; }
 
+    .info { margin-top: 2rem; background: #fff; border: 1px solid #ddd; border-radius: 8px; padding: 1.5rem; }
+    .info h2 { font-size: 1.15rem; margin-bottom: 0.75rem; }
+    .info p { font-size: 0.9rem; color: #444; line-height: 1.5; margin-bottom: 0.5rem; }
+    .info .source a { color: #2980b9; }
+    #timestamp { color: #999; font-size: 0.8rem; margin-top: 0.5rem; }
+
     @media (max-width: 480px) {
       h1 { font-size: 1.4rem; }
       .card { padding: 1rem; gap: 1rem; }
       .card .score { font-size: 2rem; min-width: 3rem; }
       #map { height: 250px; }
+      .info { padding: 1rem; }
     }
   </style>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
@@ -111,6 +118,12 @@
     <p class="subtitle">Worst restaurant health inspection scores in the last 18 months</p>
     <div id="cards"></div>
     <div id="map"></div>
+    <div class="info">
+      <h2>What do these scores mean?</h2>
+      <p>The City of Denton's Environmental Health Division inspects restaurants on a 0–100 scale. A score of 70 or above is passing. Below 70 means significant health code violations were found. A perfect 100 means no violations.</p>
+      <p class="source">Data from the <a href="https://data.cityofdenton.com">City of Denton Open Data Portal</a>.</p>
+      <p id="timestamp"></p>
+    </div>
     <div id="error">
       <p>Unable to load inspection data.</p>
       <p>Visit the <a href="https://data.cityofdenton.com">City of Denton data portal</a> directly.</p>
@@ -176,6 +189,8 @@ LIMIT 3`;
               .addTo(map);
           }
         });
+
+        document.getElementById('timestamp').textContent = 'Data fetched ' + new Date().toLocaleString();
       } catch (e) {
         cardsEl.style.display = 'none';
         document.getElementById('map').style.display = 'none';
