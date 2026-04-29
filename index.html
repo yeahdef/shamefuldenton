@@ -46,12 +46,12 @@
       display: flex;
       align-items: center;
       gap: 1.25rem;
+      border-left: 5px solid #ccc;
     }
 
     .card .score {
       font-size: 2.5rem;
       font-weight: 700;
-      color: #c0392b;
       min-width: 4rem;
       text-align: center;
       line-height: 1;
@@ -78,6 +78,25 @@
       font-size: 0.85rem;
     }
 
+    #load-more-wrap {
+      text-align: center;
+      margin-top: 1.25rem;
+    }
+
+    #load-more {
+      background: #fff;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      padding: 0.6rem 1.5rem;
+      font-size: 0.9rem;
+      cursor: pointer;
+      color: #444;
+    }
+
+    #load-more:hover {
+      background: #f0f0f0;
+    }
+
     #error {
       display: none;
       background: #fdf2f2;
@@ -101,6 +120,28 @@
     .info .source a { color: #2980b9; }
     #timestamp { color: #999; font-size: 0.8rem; margin-top: 0.5rem; }
 
+    .score-legend {
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+      margin-top: 0.75rem;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+      font-size: 0.8rem;
+      color: #555;
+    }
+
+    .legend-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
     @media (max-width: 480px) {
       h1 { font-size: 1.4rem; }
       .card { padding: 1rem; gap: 1rem; }
@@ -117,11 +158,21 @@
     <h1>🤮 SHAMEDENTON.FOOD</h1>
     <p class="subtitle">Worst restaurant health inspection scores in the last 18 months</p>
     <div id="cards"></div>
+    <div id="load-more-wrap" style="display:none;">
+      <button id="load-more">Load more</button>
+    </div>
     <div id="map"></div>
     <div class="info">
       <h2>What do these scores mean?</h2>
       <p>The City of Denton's Environmental Health Division inspects restaurants on a 0–100 scale. A score of 70 or above is passing. Below 70 means significant health code violations were found. A perfect 100 means no violations.</p>
-      <p class="source">Data from the <a href="https://data.cityofdenton.com">City of Denton Open Data Portal</a>.</p>
+      <div class="score-legend">
+        <span class="legend-item"><span class="legend-dot" style="background:#c0392b;"></span>Critical (&lt;60)</span>
+        <span class="legend-item"><span class="legend-dot" style="background:#e74c3c;"></span>Failing (60–69)</span>
+        <span class="legend-item"><span class="legend-dot" style="background:#e67e22;"></span>Marginal (70–79)</span>
+        <span class="legend-item"><span class="legend-dot" style="background:#f0c040;"></span>Fair (80–89)</span>
+        <span class="legend-item"><span class="legend-dot" style="background:#27ae60;"></span>Good (90+)</span>
+      </div>
+      <p class="source" style="margin-top:0.75rem;">Data from the <a href="https://data.cityofdenton.com">City of Denton Open Data Portal</a>.</p>
       <p id="timestamp"></p>
     </div>
     <div id="error">
@@ -131,11 +182,101 @@
   </div>
 
   <script>
-    document.addEventListener('DOMContentLoaded', async function () {
-      const cardsEl = document.getElementById('cards');
-      const errorEl = document.getElementById('error');
+    var allRecords = [];
+    var page = 0;
+    var PAGE_SIZE = 5;
+    var map;
+    var markers;
 
-      const sql = `SELECT "Name", "Address", "HealthScoreInt", "HealthScoreDate", "Lat", "Long"
+    function scoreColor(score) {
+      if (score < 60) return '#c0392b';
+      if (score < 70) return '#e74c3c';
+      if (score < 80) return '#e67e22';
+      if (score < 90) return '#f0c040';
+      return '#27ae60';
+    }
+
+    function createMarkerIcon(color) {
+      return L.divIcon({
+        className: '',
+        html: '<div style="width:14px;height:14px;border-radius:50%;background:' + color + ';border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,0.45);"></div>',
+        iconSize: [14, 14],
+        iconAnchor: [7, 7],
+        popupAnchor: [0, -10]
+      });
+    }
+
+    async function showPage() {
+      var cardsEl = document.getElementById('cards');
+      var start = page * PAGE_SIZE;
+      var batch = allRecords.slice(start, start + PAGE_SIZE);
+      var pinPromises = [];
+
+      for (var i = 0; i < batch.length; i++) {
+        var record = batch[i];
+        var score = record.HealthScoreInt;
+        var color = scoreColor(score);
+
+        var card = document.createElement('div');
+        card.className = 'card';
+        card.setAttribute('data-lat', record.Lat ?? '');
+        card.setAttribute('data-long', record.Long ?? '');
+        card.style.borderLeftColor = color;
+
+        var raw = String(record.HealthScoreDate).slice(0, 8);
+        var formatted = raw.slice(4, 6) + '/' + raw.slice(6, 8) + '/' + raw.slice(0, 4);
+
+        card.innerHTML =
+          '<div class="score" style="color:' + color + '">' + score + '</div>' +
+          '<div class="details">' +
+            '<div class="name">' + escapeHtml(record.Name) + '</div>' +
+            '<div class="address">' + escapeHtml(record.Address) + '</div>' +
+            '<div class="date">Inspected ' + formatted + '</div>' +
+          '</div>';
+
+        cardsEl.appendChild(card);
+
+        // Queue pin placement (async for geocode fallback)
+        var popup = '<strong>' + escapeHtml(record.Name) + '</strong><br>Score: ' + score;
+        var lat = parseFloat(record.Lat);
+        var lng = parseFloat(record.Long);
+
+        if (!isNaN(lat) && !isNaN(lng)) {
+          markers.addLayer(L.marker([lat, lng], { icon: createMarkerIcon(color) }).bindPopup(popup));
+        } else {
+          var addr = record.Address;
+          pinPromises.push(geocodeAndPin(markers, addr + ', Denton, TX', popup, color));
+        }
+      }
+
+      page++;
+
+      // Await any geocoding before fitting bounds
+      if (pinPromises.length > 0) {
+        await Promise.allSettled(pinPromises);
+      }
+
+      if (markers.getLayers().length > 0) {
+        map.fitBounds(markers.getBounds().pad(0.15));
+      }
+
+      // Show/hide load-more button
+      var wrap = document.getElementById('load-more-wrap');
+      if (page * PAGE_SIZE >= allRecords.length) {
+        wrap.style.display = 'none';
+      } else {
+        var remaining = allRecords.length - page * PAGE_SIZE;
+        document.getElementById('load-more').textContent =
+          'Load ' + Math.min(remaining, PAGE_SIZE) + ' more (' + remaining + ' remaining)';
+        wrap.style.display = 'block';
+      }
+    }
+
+    document.addEventListener('DOMContentLoaded', async function () {
+      var cardsEl = document.getElementById('cards');
+      var errorEl = document.getElementById('error');
+
+      var sql = `SELECT "Name", "Address", "HealthScoreInt", "HealthScoreDate", "Lat", "Long"
 FROM (
   SELECT DISTINCT ON ("Name", "Address")
     "Name", "Address", "HealthScoreInt"::int AS "HealthScoreInt",
@@ -145,84 +286,53 @@ FROM (
   ORDER BY "Name", "Address", "HealthScoreDate" DESC
 ) latest
 ORDER BY "HealthScoreInt" ASC
-LIMIT 5`;
+LIMIT 50`;
 
       try {
-        const url = 'https://data.cityofdenton.com/api/3/action/datastore_search_sql?sql=' + encodeURIComponent(sql);
-        const res = await fetch(url);
+        var url = 'https://data.cityofdenton.com/api/3/action/datastore_search_sql?sql=' + encodeURIComponent(sql);
+        var res = await fetch(url);
         if (!res.ok) throw new Error('API returned ' + res.status);
-        const data = await res.json();
-        const records = data.result.records;
+        var data = await res.json();
+        allRecords = data.result.records;
 
-        for (const record of records) {
-          const card = document.createElement('div');
-          card.className = 'card';
-          card.setAttribute('data-lat', record.Lat ?? '');
-          card.setAttribute('data-long', record.Long ?? '');
-
-          const raw = String(record.HealthScoreDate).slice(0, 8);
-          const formatted = raw.slice(4, 6) + '/' + raw.slice(6, 8) + '/' + raw.slice(0, 4);
-
-          card.innerHTML =
-            '<div class="score">' + record.HealthScoreInt + '</div>' +
-            '<div class="details">' +
-              '<div class="name">' + escapeHtml(record.Name) + '</div>' +
-              '<div class="address">' + escapeHtml(record.Address) + '</div>' +
-              '<div class="date">Inspected ' + formatted + '</div>' +
-            '</div>';
-
-          cardsEl.appendChild(card);
-        }
-
-        var map = L.map('map').setView([33.2148, -97.1331], 13);
+        map = L.map('map').setView([33.2148, -97.1331], 13);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
           attribution: '&copy; OpenStreetMap contributors',
           maxZoom: 19
         }).addTo(map);
+        markers = L.featureGroup().addTo(map);
 
-        var markers = L.featureGroup().addTo(map);
-        var cards = document.querySelectorAll('.card');
-        for (var i = 0; i < cards.length; i++) {
-          var card = cards[i];
-          var lat = parseFloat(card.dataset.lat);
-          var lng = parseFloat(card.dataset.long);
-          var name = card.querySelector('.name').textContent;
-          var score = card.querySelector('.score').textContent;
-          var popup = '<strong>' + escapeHtml(name) + '</strong><br>Score: ' + score;
+        document.getElementById('load-more').addEventListener('click', function () {
+          showPage();
+        });
 
-          if (!isNaN(lat) && !isNaN(lng)) {
-            markers.addLayer(L.marker([lat, lng]).bindPopup(popup));
-          } else {
-            var addr = card.querySelector('.address').textContent;
-            await geocodeAndPin(markers, addr + ', Denton, TX', popup);
-          }
-        }
-        if (markers.getLayers().length > 0) {
-          map.fitBounds(markers.getBounds().pad(0.15));
-        }
+        await showPage();
 
         document.getElementById('timestamp').textContent = 'Data fetched ' + new Date().toLocaleString();
       } catch (e) {
         cardsEl.style.display = 'none';
         document.getElementById('map').style.display = 'none';
+        document.getElementById('load-more-wrap').style.display = 'none';
         errorEl.style.display = 'block';
       }
     });
 
-    async function geocodeAndPin(group, address, popup) {
+    async function geocodeAndPin(group, address, popup, color) {
       try {
         var geoUrl = 'https://nominatim.openstreetmap.org/search?format=json&limit=1&q=' + encodeURIComponent(address);
         var geoRes = await fetch(geoUrl, { headers: { 'User-Agent': 'ShameDenton/1.0' } });
         var geoData = await geoRes.json();
         if (geoData.length > 0) {
-          group.addLayer(L.marker([parseFloat(geoData[0].lat), parseFloat(geoData[0].lon)])
-            .bindPopup(popup));
+          group.addLayer(
+            L.marker([parseFloat(geoData[0].lat), parseFloat(geoData[0].lon)], { icon: createMarkerIcon(color) })
+              .bindPopup(popup)
+          );
         }
       } catch (e) { /* silently skip — card still shows, just no pin */ }
     }
 
     function escapeHtml(str) {
-      const d = document.createElement('div');
+      var d = document.createElement('div');
       d.textContent = str;
       return d.innerHTML;
     }
