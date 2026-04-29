@@ -225,11 +225,18 @@
       });
     }
 
+    // Validate that a coordinate pair is plausibly in the Denton, TX region
+    function isValidCoord(lat, lng) {
+      return !isNaN(lat) && !isNaN(lng) &&
+             lat > 31 && lat < 35 && lng > -99 && lng < -95;
+    }
+
     async function geocodeAddress(address) {
       if (address in geocodeCache) return geocodeCache[address];
       try {
-        var geoUrl = 'https://nominatim.openstreetmap.org/search?format=json&limit=1&q=' + encodeURIComponent(address + ', Denton, TX');
-        var geoRes = await fetch(geoUrl, { headers: { 'User-Agent': 'ShameDenton/1.0' } });
+        var geoUrl = 'https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=us&q=' +
+          encodeURIComponent(address + ', Denton, TX');
+        var geoRes = await fetch(geoUrl);
         var geoData = await geoRes.json();
         if (geoData.length > 0) {
           var result = { lat: parseFloat(geoData[0].lat), lng: parseFloat(geoData[0].lon) };
@@ -249,7 +256,7 @@
       var totalPages = Math.ceil(allRecords.length / PAGE_SIZE);
       var start = page * PAGE_SIZE;
       var batch = allRecords.slice(start, start + PAGE_SIZE);
-      var pinPromises = [];
+      var toGeocode = []; // {addr, popup, color} for records needing geocoding
 
       for (var i = 0; i < batch.length; i++) {
         var record = batch[i];
@@ -277,24 +284,24 @@
         var lat = parseFloat(record.Lat);
         var lng = parseFloat(record.Long);
 
-        if (!isNaN(lat) && !isNaN(lng)) {
+        if (isValidCoord(lat, lng)) {
           markers.addLayer(L.marker([lat, lng], { icon: createMarkerIcon(color) }).bindPopup(popup));
         } else {
-          // Capture loop vars for async closure
-          (function(addr, p, c) {
-            pinPromises.push(
-              geocodeAddress(addr).then(function(coords) {
-                if (coords) {
-                  markers.addLayer(L.marker([coords.lat, coords.lng], { icon: createMarkerIcon(c) }).bindPopup(p));
-                }
-              })
-            );
-          })(record.Address, popup, color);
+          toGeocode.push({ addr: record.Address, popup: popup, color: color });
         }
       }
 
-      if (pinPromises.length > 0) {
-        await Promise.allSettled(pinPromises);
+      // Geocode sequentially to respect Nominatim's 1 req/sec rate limit.
+      // Cache means repeat page visits are instant.
+      for (var j = 0; j < toGeocode.length; j++) {
+        var job = toGeocode[j];
+        var coords = await geocodeAddress(job.addr);
+        if (coords) {
+          markers.addLayer(L.marker([coords.lat, coords.lng], { icon: createMarkerIcon(job.color) }).bindPopup(job.popup));
+        }
+        if (j < toGeocode.length - 1) {
+          await new Promise(function(r) { setTimeout(r, 1100); });
+        }
       }
 
       if (markers.getLayers().length > 0) {
