@@ -93,18 +93,24 @@
       font-weight: 600;
     }
 
+    #map { height: 350px; border-radius: 8px; margin-top: 1.5rem; }
+
     @media (max-width: 480px) {
       h1 { font-size: 1.4rem; }
       .card { padding: 1rem; gap: 1rem; }
       .card .score { font-size: 2rem; min-width: 3rem; }
+      #map { height: 250px; }
     }
   </style>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 </head>
 <body>
   <div class="container">
     <h1>Shame Denton</h1>
     <p class="subtitle">Worst restaurant health inspection scores in the last 18 months</p>
     <div id="cards"></div>
+    <div id="map"></div>
     <div id="error">
       <p>Unable to load inspection data.</p>
       <p>Visit the <a href="https://data.cityofdenton.com">City of Denton data portal</a> directly.</p>
@@ -154,8 +160,25 @@ LIMIT 3`;
 
           cardsEl.appendChild(card);
         }
+
+        var map = L.map('map').setView([33.2148, -97.1331], 13);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          attribution: '&copy; OpenStreetMap contributors',
+          maxZoom: 19
+        }).addTo(map);
+
+        document.querySelectorAll('.card').forEach(function(card) {
+          var lat = parseFloat(card.dataset.lat);
+          var lng = parseFloat(card.dataset.long);
+          if (!isNaN(lat) && !isNaN(lng)) {
+            L.marker([lat, lng])
+              .bindPopup('<strong>' + card.querySelector('.name').textContent + '</strong><br>Score: ' + card.querySelector('.score').textContent)
+              .addTo(map);
+          }
+        });
       } catch (e) {
         cardsEl.style.display = 'none';
+        document.getElementById('map').style.display = 'none';
         errorEl.style.display = 'block';
       }
     });
